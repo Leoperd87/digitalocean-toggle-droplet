@@ -1,0 +1,21 @@
+{
+  "name": "digitalocean-toggle-droplet",
+  "description": "Create or destroy droplet on DigitalOcean from image",
+  "version": "0.0.1",
+  "homepage": "// todo",
+  "author": {
+    "name": "Efim Vl. Dejin",
+    "email": "efim@dejin.pp.ua",
+    "url": "http://dej.in.ua/"
+  },
+  "main": "index.js",
+  "engines": {
+    "node": ">= 0.8.0"
+  },
+  "dependencies": {
+    "terminal-menu": "2.1.1"
+  },
+  "keywords": [
+    "DigitalOcean"
+  ]
+}
