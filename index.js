@@ -1,9 +1,17 @@
-var request = require('./request');
-var menu = require('./test');
+var request = require('./lib/request');
+var Menu = require('./lib/menu');
+
+var Deffered = require('./lib/waiter');
 
 var fs = require('fs');
 
-var config = JSON.parse(fs.readFileSync('./config.json'));
+var config;
+
+if (fs.existsSync('./config_d.json')) {
+  config = JSON.parse(fs.readFileSync('./config_d.json'));
+} else {
+  config = JSON.parse(fs.readFileSync('./config.json'));
+}
 
 var TOKEN = config.token;
 
@@ -11,6 +19,7 @@ var images;
 var image;
 var droplets;
 var droplet;
+var zones;
 
 var rebootDroplet = function(id) {
   request({
@@ -22,15 +31,13 @@ var rebootDroplet = function(id) {
     }
   }, function(d, c) {
     console.log('Rebooted');
-    //console.log(d);
-    //console.log(c);
   }, function(d) {
     console.log('Can\'t reboot');
     console.log(d);
   });
 };
 
-var createDroplet = function(zone) {
+var createDroplet = function(zone, size) {
   request({
       url: 'droplets',
       token: TOKEN,
@@ -38,7 +45,7 @@ var createDroplet = function(zone) {
       data: {
         name: config.dropletName,
         region: zone,
-        size: '512mb', // todo
+        size: size,
         image: image.id,
         ssh_keys: [],
         backups: false,
@@ -83,6 +90,11 @@ var createDroplet = function(zone) {
 
 };
 
+var dropletsDef = new Deffered();
+var zonesDef = new Deffered();
+
+dropletsDef.awaitDeferred(zonesDef);
+
 request({
     url: 'droplets?page=1&per_page=10',
     token: TOKEN,
@@ -92,14 +104,39 @@ request({
    * @param { {droplets: Array.<{}>}} d
    */
   function(d) {
-    droplets = d.droplets;
-    for (var i = 0; i < droplets.length; i++) {
-      if (droplets[i].name === config.dropletName) {
-        droplet = droplets[i];
-        break;
-      }
+    dropletsDef.callback(d);
+  }, function(d) {
+    console.log('Can\'t get droplet list');
+    console.log(d);
+  });
+
+request({
+    url: 'regions',
+    token: TOKEN,
+    method: 'GET'
+  },
+  function(d) {
+    zonesDef.callback(d);
+  }, function(d) {
+    console.log('Can\'t get regions list');
+    console.log(d);
+  });
+
+dropletsDef.addCallback(function(d) {
+  droplets = d.droplets;
+});
+zonesDef.addCallback(function(d) {
+  zones = d.regions;
+});
+
+dropletsDef.addCallback(function() {
+  for (var i = 0; i < droplets.length; i++) {
+    if (droplets[i].name === config.dropletName) {
+      droplet = droplets[i];
+      break;
     }
-    if (droplet !== undefined) {
+  }
+  if (droplet !== undefined) {
       request({
         url: 'droplets/' + droplet.id,
         token: TOKEN,
@@ -112,62 +149,63 @@ request({
         console.log(d);
         console.log('DELETED');
       });
-    } else {
-      request({
-          url: 'images?page=1&per_page=10',
-          token: TOKEN,
-          method: 'GET'
-        },
+  } else {
+    request({
+        url: 'images?page=1&per_page=10',
+        token: TOKEN,
+        method: 'GET'
+      },
+      /**
+       * @param { {regions: Array.<string>}} d
+       */
+      function(d) {
         /**
-         * @param { {regions: Array.<string>}} d
+         * @type { {regions: Array.<string>}}
          */
-        function(d) {
-          /**
-           * @type { {regions: Array.<string>}}
-           */
-          images = d.images;
-          var i;
-          for (i = 0; i < images.length; i++) {
-            if (images[i].name === config.imageName) {
-              image = images[i];
-              break;
+        images = d.images;
+        var i;
+        for (i = 0; i < images.length; i++) {
+          if (images[i].name === config.imageName) {
+            image = images[i];
+            break;
+          }
+        }
+        if (image !== undefined) {
+          var names = [];
+          var aZones = [];
+          for (i = 0; i < image.regions.length; i++) {
+            for (var j = 0; j < zones.length; j++) {
+              if (image.regions[i] == zones[j].slug && zones[j].available) {
+                names.push(zones[j].name);
+                aZones.push(zones[j]);
+              }
             }
           }
-          if (image !== undefined) {
-            //console.log(image.regions.join(' '));
+          var m = new Menu(
+            'Select region',
+            names,
+            function(index) {
+              m.close();
+              var currentZone = aZones[index];
 
-            //menu.addDelimiter('-', 40, 'Select region');
-
-            //for (i = 0; i < image.regions.length; i++) {
-            //  menu.addItem(
-            //    image.regions[i],
-            //    (function(z) {
-            //      return createDroplet.bind(this, z);
-            //    })(image.regions[i])
-            //  );
-            //}
-
-            //menu.start();
-            var m = menu(
-              'Select region',
-              image.regions,
-              function(index) {
-                m.close();
-                createDroplet(image.regions[index]);
-              }
-            );
-
-          } else {
-            console.log('Can\'t find image');
-          }
-        }, function(d) {
-          console.log('Can\'t get image list');
-          console.log(d);
-        });
-
-
-    }
-  }, function(d) {
-    console.log('Can\'t get droplet list');
-    console.log(d);
-  });
+              var m2 = new Menu(
+                'Select size',
+                currentZone.sizes,
+                function(index) {
+                  m2.close();
+                  createDroplet(currentZone.slug, currentZone.sizes[index]);
+                }
+              );
+              m2.render();
+            }
+          );
+          m.render();
+        } else {
+          console.log('Can\'t find image');
+        }
+      }, function(d) {
+        console.log('Can\'t get image list');
+        console.log(d);
+      });
+  }
+});
